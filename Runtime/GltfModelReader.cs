@@ -180,20 +180,73 @@ public sealed class GltfModelReader : ISceneReader
         var tex = ch.Texture;
         if (tex is null) return null;
 
-        // Resolve a path-ish identifier for the texture: prefer the source URI of the
-        // primary image; fall back to a synthetic name for embedded image data so the
-        // texture loader can still distinguish it (the actual bytes will need a custom
-        // resolver to read them out of the model in that case - tracked separately).
-        string assetPath = tex.PrimaryImage?.Name
-                           ?? $"image_{tex.PrimaryImage?.LogicalIndex ?? -1}.embedded";
-        if (tex.PrimaryImage?.Content.SourcePath is { Length: > 0 } src)
-            assetPath = src;
+        string? assetPath = ResolveTexturePath(tex);
+        if (string.IsNullOrEmpty(assetPath)) return null;
 
         var sampler = tex.Sampler;
         var wrapS = sampler is null ? SceneWrapMode.Repeat : ConvertWrap(sampler.WrapS);
         var wrapT = sampler is null ? SceneWrapMode.Repeat : ConvertWrap(sampler.WrapT);
 
         return new SceneTextureRef(assetPath, ch.TextureCoordinate, wrapS, wrapT);
+    }
+
+    /// <summary>
+    /// Resolves a glTF <see cref="GLTF.Texture"/> to an asset-server-loadable path.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three sources, in order of preference:
+    /// </para>
+    /// <list type="number">
+    ///   <item><description>
+    ///     <b>Image content with a real source URI</b> (external sibling file, file://
+    ///     URI). Preserved verbatim - <c>SceneSpawner.ResolveTexturePath</c> joins it
+    ///     against the model's directory.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Embedded image</b> (data URI, GLB binary buffer): bytes are published into
+    ///     <see cref="InMemoryAssetReader.ProcessWideStore"/> under a synthetic
+    ///     <c>__embedded__/</c> path so <see cref="TextureAssetLoader"/> can decode them
+    ///     through the regular extension dispatch. Idempotent across reloads (same
+    ///     LogicalIndex + extension produce the same key).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Unknown</b>: returns <c>null</c>; the texture slot stays unbound.
+    ///   </description></item>
+    /// </list>
+    /// </remarks>
+    private static string? ResolveTexturePath(GLTF.Texture tex)
+    {
+        var img = tex.PrimaryImage;
+        if (img is null) return null;
+
+        var content = img.Content;
+
+        // External file path: prefer the original SharpGLTF-recorded source path. Note
+        // SharpGLTF resolves this relative to the .gltf directory, so it's an absolute
+        // disk path - we strip back to a basename so SceneSpawner.ResolveTexturePath can
+        // re-join against the SceneAsset.SourcePath directory at spawn time.
+        if (!content.IsEmpty && !string.IsNullOrEmpty(content.SourcePath))
+        {
+            var fileName = System.IO.Path.GetFileName(content.SourcePath);
+            if (!string.IsNullOrEmpty(fileName)) return fileName;
+        }
+
+        // Embedded bytes: publish under a synthetic path keyed by the glTF logical index
+        // + extension. Same model loaded twice publishes the same key (overwrite is fine -
+        // bytes are identical) and TextureAssetLoader picks it up via the in-memory source.
+        if (!content.IsEmpty)
+        {
+            var ext = string.IsNullOrEmpty(content.FileExtension) ? ".png" : "." + content.FileExtension.TrimStart('.');
+            var modelHint = string.IsNullOrEmpty(img.LogicalParent?.LogicalImages.Count.ToString())
+                ? "model"
+                : "model";
+            var path = $"__embedded__/{modelHint}/image_{img.LogicalIndex}{ext}";
+            InMemoryAssetReader.Publish(new AssetPath(path), content.Content.ToArray());
+            return path;
+        }
+
+        return null;
     }
 
     private static SceneWrapMode ConvertWrap(GLTF.TextureWrapMode mode) => mode switch
