@@ -30,23 +30,12 @@ public sealed class GltfModelPlugin : IPlugin
         var reader = new GltfModelReader();
         var loader = new GltfModelLoader(reader);
 
-        if (!app.World.TryGetResource<SceneReaderRegistry>(out var registry))
-        {
-            registry = new SceneReaderRegistry();
-            app.World.InsertResource(registry);
-            Logger.Warn("GltfModelPlugin: SceneReaderRegistry was missing - did you forget to add ScenesPlugin? Created one implicitly.");
-        }
+        var registry = app.World.Resource<SceneReaderRegistry>();
         registry.RegisterReader(reader);
 
-        if (app.World.TryGetResource<AssetServer>(out var server))
-        {
-            server.RegisterLoader(loader);
-            Logger.Debug("GltfModelPlugin: GltfModelLoader registered with AssetServer.");
-        }
-        else
-        {
-            Logger.Warn("GltfModelPlugin: AssetServer not found - GltfModelLoader was NOT registered. Add AssetPlugin first.");
-        }
+        var server = app.World.Resource<AssetServer>();
+        server.RegisterLoader(loader);
+        Logger.Debug("GltfModelPlugin: GltfModelLoader registered with AssetServer.");
 
         Logger.Info("GltfModelPlugin: SharpGLTF backend ready.");
     }
