@@ -89,7 +89,7 @@ public class GltfModelReaderTests
         foreach (var r in scene.Roots) Walk(r);
 
         materials.Should().NotBeEmpty();
-        // SharpGLTF's CreateDefault() builds an MR material with white base colour
+        // SharpGLTF's CreateDefault() builds an MR material with white base color
         // and roughness=1, metallic=0.
         materials[0].BaseColorFactor.Should().Be(Vector4.One);
         materials[0].RoughnessFactor.Should().BeApproximately(1f, 1e-5f);
